@@ -1,0 +1,11 @@
+﻿Dynamic packages are placed in directory "packages".
+Every package is contained in it's own folder and has it's descriptor.
+Descriptor is a JSON file containing a JSON object
+with predefined attributes.
+
+The most important attribute: "RootAssembly". It contains a relative path
+to the root assembly.
+"PackageId": A unique ID of the package.
+"Version": A version string of SemVer format.
+"Requirements": (array) Which modules are also required for this package.
+  Every array entry is an object and has two properties: "PackageId" and "Version"
