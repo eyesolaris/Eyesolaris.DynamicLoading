@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Collections.Immutable;
+using System.Reflection;
 using System.Runtime.Loader;
 
 namespace Eyesolaris.DynamicLoading
@@ -8,6 +9,13 @@ namespace Eyesolaris.DynamicLoading
         public PackageAssemblyLoadContext(string? name, bool isCollectible)
             : base(name, isCollectible)
         {
+            _interfaceAssemblies = ImmutableHashSet<AssemblyName>.Empty;
+        }
+
+        public PackageAssemblyLoadContext(string? name, bool isCollectible, IReadOnlySet<AssemblyName> interfaceAssemblies)
+            : base(name, isCollectible)
+        {
+            _interfaceAssemblies = interfaceAssemblies.ToImmutableHashSet();
         }
 
         protected override Assembly? Load(AssemblyName assemblyName)
@@ -16,15 +24,20 @@ namespace Eyesolaris.DynamicLoading
             {
                 return _thisAssembly;
             }
-            Assembly? foundAssembly = AssemblyLoadContext.Default.Assemblies.Where(a =>
+            /*Assembly? foundAssembly = AssemblyLoadContext.Default.Assemblies.Where(a =>
             {
                 AssemblyName loadedAssemblyName = a.GetName();
                 bool equal = loadedAssemblyName.FullName == assemblyName.FullName;
                 return equal;
-            }).SingleOrDefault();
-            if (foundAssembly is not null)
+            }).SingleOrDefault();*/
+            Assembly? loadedAssembly = null;
+            if (_interfaceAssemblies.Contains(assemblyName))
             {
-                return foundAssembly;
+                loadedAssembly = AssemblyLoadContext.Default.LoadFromAssemblyName(assemblyName);
+            }
+            if (loadedAssembly is not null)
+            {
+                return loadedAssembly;
             }
             return base.Load(assemblyName);
         }
@@ -37,5 +50,7 @@ namespace Eyesolaris.DynamicLoading
 
         private static readonly Assembly _thisAssembly = Assembly.GetExecutingAssembly();
         private static readonly AssemblyName _thisAssemblyName = _thisAssembly.GetName();
+
+        private ImmutableHashSet<AssemblyName> _interfaceAssemblies;
     }
 }

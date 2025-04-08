@@ -16,10 +16,29 @@ using System.Threading.Tasks;
 
 namespace Eyesolaris.DynamicLoading
 {
+    public sealed class LoadedPackage : LoadedPackage<IDynamicModuleFactory>
+    {
+        public LoadedPackage(string path, CultureInfo expectedCulture)
+            : base(path, expectedCulture, ImmutableHashSet<AssemblyName>.Empty)
+        {
+        }
+
+        public LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblies)
+            : base(path, expectedCulture, interfaceAssemblies)
+        {
+        }
+
+        internal LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblies, Logger logger)
+            : base(path, expectedCulture, interfaceAssemblies, logger)
+        {
+        }
+    }
+
     /// <summary>
     /// Currently dependencies are ignored
     /// </summary>
-    public sealed class LoadedPackage : IDisposable
+    public class LoadedPackage<TFactoryType> : IDisposable
+        where TFactoryType : class, IDynamicModuleFactory
     {
         internal const string PACKAGE_FILE_NAME = "package.json";
         internal const string PACKAGE_ID_PROPERTY = "PackageId";
@@ -28,15 +47,22 @@ namespace Eyesolaris.DynamicLoading
 
         internal const string DEFAULT_CULTURE_DIR = "en";
 
+        public LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblyNames)
+            : this(path, expectedCulture, interfaceAssemblyNames, new GlobalLoggerProxy())
+        {
+        }
+
         /// <summary>
         /// 
         /// </summary>
         /// <param name="path">A path to the package directory</param>
-        public LoadedPackage(string path, CultureInfo expectedCulture)
+        internal LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblyNames, Logger logger)
         {
+            _logger = logger;
             RootDir = path;
             ExpectedCulture = expectedCulture;
-            var dirsInPackage = Directory.GetDirectories(RootDir);
+            _interfaceAssemblies = interfaceAssemblyNames.ToImmutableHashSet(AssemblyNameComparer.Instance);
+            var dirsInPackage = Directory.GetDirectories(path);
             var cultureDir = dirsInPackage.Where(path => expectedCulture.Name == System.IO.Path.GetFileName(path)).SingleOrDefault();
             if (cultureDir is null)
             {
@@ -82,7 +108,7 @@ namespace Eyesolaris.DynamicLoading
                 throw new InvalidOperationException($"Can't load the package {path}", ex);
             }
 
-            AssemblyContext = new PackageAssemblyLoadContext($"{PackageId} {Version}", isCollectible: false);
+            AssemblyContext = new PackageAssemblyLoadContext($"{PackageId} {Version}", isCollectible: true, interfaceAssemblyNames);
             AssemblyContext.Resolving += AssemblyContext_Resolving;
             AssemblyContext.ResolvingUnmanagedDll += AssemblyContext_ResolvingUnmanagedDll;
             AssemblyContext.Unloading += AssemblyContext_Unloading;
@@ -117,6 +143,8 @@ namespace Eyesolaris.DynamicLoading
 
         public IReadOnlyList<Assembly> LoadedAssemblies => AssemblyContext.Assemblies.ToImmutableList();
 
+        public IReadOnlySet<AssemblyName> InterfaceAssemblies => _interfaceAssemblies;
+
         public void Dispose()
         {
             // Не изменяйте этот код. Разместите код очистки в методе "Dispose(bool disposing)".
@@ -129,16 +157,16 @@ namespace Eyesolaris.DynamicLoading
             return "Package " +  PackageName.ToString();
         }
 
-        private IReadOnlyDictionary<DynamicEntityName, IDynamicModuleFactory> _CreateFactories()
+        private IReadOnlyDictionary<DynamicEntityName, TFactoryType> _CreateFactories()
         {
             AssemblyContext.LoadFromAssemblyPath(RootAssemblyPath);
-            List<IDynamicModuleFactory> dynamicModuleFactoryObjects = new();
+            List<TFactoryType> dynamicModuleFactoryObjects = new();
             foreach (var loadedAssembly in LoadedAssemblies)
             {
-                var dynamicModuleFactoryTypes = loadedAssembly.ExportedTypes.Where(t => t.IsAssignableTo(typeof(IDynamicModuleFactory)));
+                var dynamicModuleFactoryTypes = loadedAssembly.ExportedTypes.Where(t => t.IsAssignableTo(typeof(TFactoryType)));
                 foreach (Type t in dynamicModuleFactoryTypes)
                 {
-                    IDynamicModuleFactory? factory = (IDynamicModuleFactory?)Activator.CreateInstance(t);
+                    TFactoryType? factory = (TFactoryType?)Activator.CreateInstance(t);
                     if (factory is not null)
                     {
                         dynamicModuleFactoryObjects.Add(factory);
@@ -147,7 +175,7 @@ namespace Eyesolaris.DynamicLoading
             }
             if (dynamicModuleFactoryObjects.Count > 0)
             {
-                Dictionary<DynamicEntityName, IDynamicModuleFactory> factories = new();
+                Dictionary<DynamicEntityName, TFactoryType> factories = new();
                 foreach (var factory in dynamicModuleFactoryObjects)
                 {
                     foreach (var moduleName in factory.SupportedModuleTypes)
@@ -159,11 +187,11 @@ namespace Eyesolaris.DynamicLoading
             }
             else
             {
-                return ImmutableDictionary<DynamicEntityName, IDynamicModuleFactory>.Empty;
+                return ImmutableDictionary<DynamicEntityName, TFactoryType>.Empty;
             }
         }
 
-        public IReadOnlyDictionary<DynamicEntityName, IDynamicModuleFactory> Factories { get; }
+        public IReadOnlyDictionary<DynamicEntityName, TFactoryType> Factories { get; }
 
         // TODO: переопределить метод завершения, только если "Dispose(bool disposing)" содержит код для освобождения неуправляемых ресурсов
         ~LoadedPackage()
@@ -172,12 +200,14 @@ namespace Eyesolaris.DynamicLoading
             Dispose(disposing: false);
         }
 
+        private readonly Logger _logger;
+        private readonly ImmutableHashSet<AssemblyName> _interfaceAssemblies;
         private readonly List<nint> _nativeLibraries = new();
-        private bool disposedValue;
+        private bool _disposedValue;
 
         private void AssemblyContext_Unloading(AssemblyLoadContext obj)
         {
-            Logger.Global.LogDebug("AssemblyContext {ctxName} is unloading", obj.Name);
+            _logger.LogDebug("AssemblyContext {ctxName} is unloading", obj.Name);
             foreach (var handle in _nativeLibraries)
             {
                 NativeLibrary.Free(handle);
@@ -187,7 +217,7 @@ namespace Eyesolaris.DynamicLoading
 
         private nint AssemblyContext_ResolvingUnmanagedDll(Assembly resolvingAssembly, string dllName)
         {
-            Logger.Global.LogTrace("Resolving the unmanaged dynamic library {dllName} for assembly {asmName}", dllName, resolvingAssembly.GetName());
+            _logger.LogTrace("Resolving the unmanaged dynamic library {dllName} for assembly {asmName}", dllName, resolvingAssembly.GetName());
             string[] foundFiles = Array.Empty<string>();
             
             static string[] TryFind(string path, string dllName)
@@ -211,7 +241,7 @@ namespace Eyesolaris.DynamicLoading
             
             if (foundFiles.Length == 0)
             {
-                Logger.Global.LogWarning("Native library {lib} is not found in {path}", dllName, RootDir);
+                _logger.LogWarning("Native library {lib} is not found in {path}", dllName, RootDir);
                 return 0;
             }
             else if (foundFiles.Length > 1)
@@ -221,7 +251,7 @@ namespace Eyesolaris.DynamicLoading
                 {
                     sb.AppendLine(file);
                 }
-                Logger.Global.LogWarning("Multiple native library \"{lib}\" files found:\n{filesList}", dllName, sb);
+                _logger.LogWarning("Multiple native library \"{lib}\" files found:\n{filesList}", dllName, sb);
             }
             nint libHandle = NativeLibrary.Load(foundFiles[0], resolvingAssembly, DllImportSearchPath.UseDllDirectoryForDependencies);
             _nativeLibraries.Add(libHandle);
@@ -230,17 +260,30 @@ namespace Eyesolaris.DynamicLoading
 
         private Assembly? AssemblyContext_Resolving(AssemblyLoadContext ctx, AssemblyName assemblyBeingResolved)
         {
-
             void LogNotFound()
             {
-                Logger.Global.LogWarning("Assembly not found in path. Assembly: {asm}, path: {path}", assemblyBeingResolved, RootDir);
+                _logger.LogWarning("Assembly not found in path. Assembly: {asm}, path: {path}", assemblyBeingResolved, RootDir);
             }
 
-            Logger.Global.LogTrace("Resolving the assembly {asm} in context {ctxName}", assemblyBeingResolved, ctx.Name);
+            _logger.LogTrace("Resolving the assembly {asm} in context {ctxName}", assemblyBeingResolved, ctx.Name);
             string? assemblySimpleName = assemblyBeingResolved.Name;
             if (assemblySimpleName is null)
             {
+                LogNotFound();
                 return null;
+            }
+            if (_interfaceAssemblies.TryGetValue(assemblyBeingResolved, out AssemblyName assemblyName))
+            {
+                try
+                {
+                    Assembly assembly = AssemblyLoadContext.Default.LoadFromAssemblyName(assemblyName);
+                    return assembly;
+                }
+                catch (Exception)
+                {
+                    LogNotFound();
+                    return null;
+                }
             }
             string searchPath = RootDir;
             if (assemblySimpleName.EndsWith(".resources") && CultureDir is not null)
@@ -269,7 +312,7 @@ namespace Eyesolaris.DynamicLoading
 
         private void Dispose(bool disposing)
         {
-            if (!disposedValue)
+            if (!_disposedValue)
             {
                 if (disposing)
                 {
@@ -283,7 +326,7 @@ namespace Eyesolaris.DynamicLoading
                 // TODO: освободить неуправляемые ресурсы (неуправляемые объекты) и переопределить метод завершения
                 
                 // TODO: установить значение NULL для больших полей
-                disposedValue = true;
+                _disposedValue = true;
             }
         }
     }
