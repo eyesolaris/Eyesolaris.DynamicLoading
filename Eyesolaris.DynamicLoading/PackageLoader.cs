@@ -15,8 +15,19 @@ namespace Eyesolaris.DynamicLoading
     public class PackageLoader<TFactoryType> : IDisposable
         where TFactoryType : class, IDynamicModuleFactory
     {
-        private readonly Dictionary<DynamicEntityName, LoadedPackage<TFactoryType>> _loadedPackages = new();
-        public IReadOnlyDictionary<DynamicEntityName, LoadedPackage<TFactoryType>> LoadedPackages => _loadedPackages;
+        private readonly Dictionary<DynamicEntityId, LoadedPackage<TFactoryType>> _loadedPackages = new();
+        public IReadOnlyDictionary<DynamicEntityId, LoadedPackage<TFactoryType>> LoadedPackages
+        {
+            get
+            {
+                IReadOnlyDictionary<DynamicEntityId, LoadedPackage<TFactoryType>> dict;
+                lock (_lock)
+                {
+                    dict = _loadedPackages.ToImmutableDictionary(_loadedPackages.Comparer);
+                }
+                return dict;
+            }
+        }
 
         public string PackagesDirectory { get; }
 
@@ -36,7 +47,10 @@ namespace Eyesolaris.DynamicLoading
 
         public void SetLogger(Logger logger)
         {
-            _logger = logger;
+            lock (_lock)
+            {
+                _logger = logger;
+            }
         }
 
         /// <summary>
@@ -53,65 +67,67 @@ namespace Eyesolaris.DynamicLoading
 
         public void LoadAll(CultureInfo expectedCulture)
         {
-            foreach (var dir in Directory.GetDirectories(PackagesDirectory))
+            lock (_lock)
             {
-                try
+                foreach (var dir in Directory.GetDirectories(PackagesDirectory))
                 {
-                    _logger.LogInformation("Loading package {package}", dir);
-                    LoadedPackage<TFactoryType> pack;
-                    if (typeof(TFactoryType) == typeof(IDynamicModuleFactory))
+                    try
                     {
-                        LoadedPackage plainPackage = new(dir, expectedCulture, _interfaceAssemblyNames, _logger);
-                        pack = (LoadedPackage<TFactoryType>)(object)plainPackage;
-                    }
-                    else
-                    {
+                        _logger.LogInformation("Loading package {package}", dir);
+                        LoadedPackage<TFactoryType> pack;
                         pack = new(dir, expectedCulture, _interfaceAssemblyNames, _logger);
+                        if (!_loadedPackages.ContainsKey(pack.PackageName))
+                        {
+                            _logger.LogInformation("The package is successfully loaded with ID {id}, name {name}, version {ver}", pack.PackageId, pack.PackageName, pack.Version);
+                            _loadedPackages.Add(pack.PackageName, pack);
+                        }
+                        else
+                        {
+                            pack.Dispose();
+                            _logger.LogDebug("The package with ID {id}, name {name}, version {version} is already loaded", pack.PackageId, pack.PackageName, pack.Version);
+                        }
                     }
-                    if (!_loadedPackages.ContainsKey(pack.PackageName))
+                    catch (Exception e)
                     {
-                        _logger.LogInformation("The package is successfully loaded with ID {id}, name {name}, version {ver}", pack.PackageId, pack.PackageName, pack.Version);
-                        _loadedPackages.Add(pack.PackageName, pack);
+                        _logger.LogWarning("Package {package} couldn't be loaded because of an exception:{ex}", dir, e);
                     }
-                    else
-                    {
-                        pack.Dispose();
-                        _logger.LogDebug("The package with ID {id}, name {name}, version {version} is already loaded", pack.PackageId, pack.PackageName, pack.Version);
-                    }
-                }
-                catch (Exception e)
-                {
-                    _logger.LogWarning("Package {package} couldn't be loaded because of an exception:{ex}", dir, e);
                 }
             }
         }
 
         public IReadOnlyList<LoadedPackage<TFactoryType>> GetPackageById(string id)
         {
-            var packages = _loadedPackages.Values.Where(p => p.PackageId == id).OrderBy(p => p.Version);
-            if (typeof(TFactoryType) == typeof(IDynamicModule))
-            {
-                return (IReadOnlyList<LoadedPackage<TFactoryType>>)(object)packages.Cast<LoadedPackage>().ToArray();
-            }
-            return packages.ToArray();
+            var allPackages = LoadedPackages.Values.Where(p => p.PackageId == id).OrderBy(p => p.Version);
+            return allPackages.ToArray();
         }
 
-        /// <summary>
-        /// Finds factory by it's supported module name
-        /// </summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
-        [Obsolete("Incorrect method name. Use FindFactoryByModuleName instead")]
-        public TFactoryType? FindFactoryByName(DynamicEntityName name)
-            => FindFactoryByModuleName(name);
-
-        public TFactoryType? FindFactoryByModuleName(DynamicEntityName name)
+        public TFactoryType? FindFactoryByModuleName(DynamicEntityIdTemplate idTemplate)
         {
-            foreach (var pkg in _loadedPackages.Values)
+            DynamicEntityId? preciseName = null;
+            if (idTemplate.Name is not null && idTemplate.Version is not null)
             {
-                if (pkg.Factories.ContainsKey(name))
+                preciseName = new(idTemplate.Name, idTemplate.Version);
+            }
+            var allPackages = LoadedPackages.Values;
+            foreach (var pkg in allPackages)
+            {
+                var factories = pkg.Factories;
+                if (preciseName is not null)
                 {
-                    return pkg.Factories[name];
+                    DynamicEntityId id = preciseName.GetValueOrDefault();
+                    if (factories.ContainsKey(preciseName.Value))
+                    {
+                        return factories[id];
+                    }
+                }
+                else
+                {
+                    string? name = idTemplate.Name;
+                    if (name is null)
+                    {
+                        return factories.Values.FirstOrDefault();
+                    }
+                    return factories.Values.Where(f => f.FactoryId == name).FirstOrDefault();
                 }
             }
             return null;
@@ -124,6 +140,7 @@ namespace Eyesolaris.DynamicLoading
 
         public void Dispose()
         {
+            GC.SuppressFinalize(this);
             foreach (var package in _loadedPackages.Values)
             {
                 package.Dispose();
@@ -132,30 +149,7 @@ namespace Eyesolaris.DynamicLoading
         }
 
         private Logger _logger;
-    }
 
-    public sealed class PackageLoader : PackageLoader<IDynamicModuleFactory>
-    {
-        /// <inheritdoc/>
-        public PackageLoader(string packagesDir)
-            : base(packagesDir)
-        {
-        }
-
-        /// <inheritdoc/>
-        public PackageLoader(string packagesDir, IEnumerable<AssemblyName> interfaceAssemblyNames)
-            : base(packagesDir, interfaceAssemblyNames)
-        {
-        }
-
-        [Obsolete("Incorrect method name. Use FindFactoryByModuleName instead")]
-        public new IDynamicModuleFactory? FindFactoryByName(DynamicEntityName name)
-            => FindFactoryByModuleName(name);
-
-        public new IDynamicModuleFactory? FindFactoryByModuleName(DynamicEntityName name)
-            => base.FindFactoryByModuleName(name);
-
-        public new IReadOnlyList<LoadedPackage> GetPackageById(string id)
-            => (IReadOnlyList<LoadedPackage>)base.GetPackageById(id);
+        private readonly object _lock = new();
     }
 }

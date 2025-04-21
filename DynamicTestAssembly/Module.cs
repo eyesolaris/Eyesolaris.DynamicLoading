@@ -9,5 +9,10 @@ namespace DynamicTestAssembly
 {
     internal class Module : DynamicModule
     {
+        protected override Task StartModule(CancellationToken token)
+        {
+            C.F();
+            return Task.CompletedTask;
+        }
     }
 }

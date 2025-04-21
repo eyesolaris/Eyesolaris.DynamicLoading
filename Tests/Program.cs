@@ -8,11 +8,11 @@ namespace Tests
 {
     internal class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             // Testing of backward compatibility after adding a new interface into the old one
             // and default implementing this new interface in the old one
-            DynamicEntityName moduleName = new("Module", new Version(1, 0));
+            DynamicEntityIdTemplate moduleName = new("Module", new Version(1, 0));
 
             string assemblyPath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!, "DynamicTestAssembly.dll");
             Assembly a = AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
@@ -24,6 +24,7 @@ namespace Tests
             loader.LoadAll(CultureInfo.InvariantCulture);
             factory = loader.FindFactoryByModuleName(moduleName);
             module = factory?.CreateDynamicModule(moduleName);
+            await (module?.Run(default) ?? Task.CompletedTask);
         }
     }
 }

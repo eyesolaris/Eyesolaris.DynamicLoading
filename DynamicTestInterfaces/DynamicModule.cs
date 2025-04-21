@@ -15,4 +15,13 @@ namespace DynamicTestInterfaces
 
         public override Task? WorkerTask => null;
     }
+
+    public class C
+    {
+    }
+
+    public class D : C
+    {
+        public static void F() { Console.WriteLine("F"); }
+    }
 }

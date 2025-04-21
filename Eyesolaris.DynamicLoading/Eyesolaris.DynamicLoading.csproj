@@ -8,13 +8,13 @@
     <Title>Eyesolaris's Module Loader Library</Title>
     <Authors>Eyesolaris</Authors>
     <Description>Library for loading dynamic modules</Description>
-	<Version>1.1</Version>
-	<AssemblyVersion>1.1</AssemblyVersion>
+	<Version>2.0</Version>
+	<AssemblyVersion>2.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Eyesolaris.Logging" Version="1.0.0" />
-    <PackageReference Include="Eyesolaris.ModuleBuildingBlocks" Version="1.1.0" />
+    <PackageReference Include="Eyesolaris.ModuleBuildingBlocks" Version="2.0.0" />
     <PackageReference Include="Eyesolaris.Utilities" Version="1.0.0" />
   </ItemGroup>
 

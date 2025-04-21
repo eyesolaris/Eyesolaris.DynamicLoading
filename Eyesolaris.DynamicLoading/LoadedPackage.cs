@@ -16,24 +16,6 @@ using System.Threading.Tasks;
 
 namespace Eyesolaris.DynamicLoading
 {
-    public sealed class LoadedPackage : LoadedPackage<IDynamicModuleFactory>
-    {
-        public LoadedPackage(string path, CultureInfo expectedCulture)
-            : base(path, expectedCulture, ImmutableHashSet<AssemblyName>.Empty)
-        {
-        }
-
-        public LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblies)
-            : base(path, expectedCulture, interfaceAssemblies)
-        {
-        }
-
-        internal LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblies, Logger logger)
-            : base(path, expectedCulture, interfaceAssemblies, logger)
-        {
-        }
-    }
-
     /// <summary>
     /// Currently dependencies are ignored
     /// </summary>
@@ -108,11 +90,11 @@ namespace Eyesolaris.DynamicLoading
                 throw new InvalidOperationException($"Can't load the package {path}", ex);
             }
 
-            AssemblyContext = new PackageAssemblyLoadContext($"{PackageId} {Version}", isCollectible: true, interfaceAssemblyNames);
+            AssemblyContext = new PackageAssemblyLoadContext($"{PackageId} {Version.Normalize()}", isCollectible: true, interfaceAssemblyNames);
             AssemblyContext.Resolving += AssemblyContext_Resolving;
             AssemblyContext.ResolvingUnmanagedDll += AssemblyContext_ResolvingUnmanagedDll;
             AssemblyContext.Unloading += AssemblyContext_Unloading;
-            
+
             Factories = _CreateFactories();
         }
 
@@ -135,7 +117,7 @@ namespace Eyesolaris.DynamicLoading
 
         public Version Version { get; }
 
-        public DynamicEntityName PackageName => new(PackageId, Version);
+        public DynamicEntityId PackageName => new(PackageId, Version);
 
         public AssemblyLoadContext AssemblyContext { get; }
 
@@ -154,10 +136,10 @@ namespace Eyesolaris.DynamicLoading
 
         public override string ToString()
         {
-            return "Package " +  PackageName.ToString();
+            return "Package " + PackageName.ToString();
         }
 
-        private IReadOnlyDictionary<DynamicEntityName, TFactoryType> _CreateFactories()
+        private IReadOnlyDictionary<DynamicEntityId, TFactoryType> _CreateFactories()
         {
             AssemblyContext.LoadFromAssemblyPath(RootAssemblyPath);
             List<TFactoryType> dynamicModuleFactoryObjects = new();
@@ -175,7 +157,7 @@ namespace Eyesolaris.DynamicLoading
             }
             if (dynamicModuleFactoryObjects.Count > 0)
             {
-                Dictionary<DynamicEntityName, TFactoryType> factories = new();
+                Dictionary<DynamicEntityId, TFactoryType> factories = new();
                 foreach (var factory in dynamicModuleFactoryObjects)
                 {
                     foreach (var moduleName in factory.SupportedModuleTypes)
@@ -183,15 +165,15 @@ namespace Eyesolaris.DynamicLoading
                         factories.Add(moduleName, factory);
                     }
                 }
-                return factories;
+                return factories.ToImmutableDictionary();
             }
             else
             {
-                return ImmutableDictionary<DynamicEntityName, TFactoryType>.Empty;
+                return ImmutableDictionary<DynamicEntityId, TFactoryType>.Empty;
             }
         }
 
-        public IReadOnlyDictionary<DynamicEntityName, TFactoryType> Factories { get; }
+        public IReadOnlyDictionary<DynamicEntityId, TFactoryType> Factories { get; }
 
         // TODO: переопределить метод завершения, только если "Dispose(bool disposing)" содержит код для освобождения неуправляемых ресурсов
         ~LoadedPackage()
@@ -203,23 +185,27 @@ namespace Eyesolaris.DynamicLoading
         private readonly Logger _logger;
         private readonly ImmutableHashSet<AssemblyName> _interfaceAssemblies;
         private readonly List<nint> _nativeLibraries = new();
+        private readonly object _lock = new();
         private bool _disposedValue;
 
         private void AssemblyContext_Unloading(AssemblyLoadContext obj)
         {
             _logger.LogDebug("AssemblyContext {ctxName} is unloading", obj.Name);
-            foreach (var handle in _nativeLibraries)
+            lock (_lock)
             {
-                NativeLibrary.Free(handle);
+                foreach (var handle in _nativeLibraries)
+                {
+                    NativeLibrary.Free(handle);
+                }
+                _nativeLibraries.Clear();
             }
-            _nativeLibraries.Clear();
         }
 
         private nint AssemblyContext_ResolvingUnmanagedDll(Assembly resolvingAssembly, string dllName)
         {
             _logger.LogTrace("Resolving the unmanaged dynamic library {dllName} for assembly {asmName}", dllName, resolvingAssembly.GetName());
             string[] foundFiles = Array.Empty<string>();
-            
+
             static string[] TryFind(string path, string dllName)
             {
                 string[] foundFiles = Directory.GetFiles(path, dllName + ".*", SearchOption.AllDirectories);
@@ -238,7 +224,7 @@ namespace Eyesolaris.DynamicLoading
             {
                 foundFiles = TryFind(RootDir, dllName);
             }
-            
+
             if (foundFiles.Length == 0)
             {
                 _logger.LogWarning("Native library {lib} is not found in {path}", dllName, RootDir);
@@ -254,7 +240,10 @@ namespace Eyesolaris.DynamicLoading
                 _logger.LogWarning("Multiple native library \"{lib}\" files found:\n{filesList}", dllName, sb);
             }
             nint libHandle = NativeLibrary.Load(foundFiles[0], resolvingAssembly, DllImportSearchPath.UseDllDirectoryForDependencies);
-            _nativeLibraries.Add(libHandle);
+            lock (_lock)
+            {
+                _nativeLibraries.Add(libHandle);
+            }
             return libHandle;
         }
 
@@ -324,7 +313,7 @@ namespace Eyesolaris.DynamicLoading
                 }
 
                 // TODO: освободить неуправляемые ресурсы (неуправляемые объекты) и переопределить метод завершения
-                
+
                 // TODO: установить значение NULL для больших полей
                 _disposedValue = true;
             }
