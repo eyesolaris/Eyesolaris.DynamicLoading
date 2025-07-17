@@ -27,7 +27,7 @@ namespace Eyesolaris.DynamicLoading
 
         public int GetHashCode([DisallowNull] AssemblyName obj)
         {
-            return obj.FullName.GetHashCode();
+            return obj.Name?.GetHashCode() ?? 0;
         }
 
         private AssemblyNameComparer()

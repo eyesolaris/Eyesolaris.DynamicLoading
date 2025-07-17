@@ -8,8 +8,8 @@
     <Title>Eyesolaris's Module Loader Library</Title>
     <Authors>Eyesolaris</Authors>
     <Description>Library for loading dynamic modules</Description>
-	<Version>2.0</Version>
-	<AssemblyVersion>2.0</AssemblyVersion>
+	<Version>2.0.1</Version>
+	<AssemblyVersion>2.0.1</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>
