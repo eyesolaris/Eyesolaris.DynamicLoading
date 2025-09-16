@@ -30,7 +30,12 @@ namespace Eyesolaris.DynamicLoading
         internal const string DEFAULT_CULTURE_DIR = "en";
 
         public LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblyNames)
-            : this(path, expectedCulture, interfaceAssemblyNames, new GlobalLoggerProxy())
+            : this(path, expectedCulture, interfaceAssemblyNames, new GlobalLoggerProxy(), isCollectible: false)
+        {
+        }
+
+        public LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblyNames, Logger logger)
+            : this(path, expectedCulture, interfaceAssemblyNames, logger, isCollectible: false)
         {
         }
 
@@ -38,7 +43,7 @@ namespace Eyesolaris.DynamicLoading
         /// 
         /// </summary>
         /// <param name="path">A path to the package directory</param>
-        internal LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblyNames, Logger logger)
+        internal LoadedPackage(string path, CultureInfo expectedCulture, IReadOnlySet<AssemblyName> interfaceAssemblyNames, Logger logger, bool isCollectible)
         {
             _logger = logger;
             RootDir = path;
@@ -90,7 +95,7 @@ namespace Eyesolaris.DynamicLoading
                 throw new InvalidOperationException($"Can't load the package {path}", ex);
             }
 
-            AssemblyContext = new PackageAssemblyLoadContext($"{PackageId} {Version.Normalize()}", isCollectible: true, interfaceAssemblyNames);
+            AssemblyContext = new PackageAssemblyLoadContext($"{PackageId} {Version.Normalize()}", isCollectible: isCollectible, interfaceAssemblyNames);
             AssemblyContext.Resolving += AssemblyContext_Resolving;
             AssemblyContext.ResolvingUnmanagedDll += AssemblyContext_ResolvingUnmanagedDll;
             AssemblyContext.Unloading += AssemblyContext_Unloading;

@@ -65,6 +65,12 @@ namespace Eyesolaris.DynamicLoading
             _interfaceAssemblyNames = interfaceAssemblyNames.ToImmutableHashSet(AssemblyNameComparer.Instance);
         }
 
+        public PackageLoader(string packagesDir, IEnumerable<AssemblyName> interfaceAssemblyNames, bool collectibleAssemblyContexts)
+            : this(packagesDir, interfaceAssemblyNames)
+        {
+            _collectibleAsemblyContexts = collectibleAssemblyContexts;
+        }
+
         public void LoadAll(CultureInfo expectedCulture)
         {
             lock (_lock)
@@ -75,7 +81,12 @@ namespace Eyesolaris.DynamicLoading
                     {
                         _logger.LogInformation("Loading package {package}", dir);
                         LoadedPackage<TFactoryType> pack;
-                        pack = new(dir, expectedCulture, _interfaceAssemblyNames, _logger);
+                        pack = new(
+                            dir,
+                            expectedCulture,
+                            _interfaceAssemblyNames,
+                            _logger,
+                            isCollectible: _collectibleAsemblyContexts == true);
                         if (!_loadedPackages.ContainsKey(pack.PackageName))
                         {
                             _logger.LogInformation("The package is successfully loaded with ID {id}, name {name}, version {ver}", pack.PackageId, pack.PackageName, pack.Version);
@@ -149,6 +160,7 @@ namespace Eyesolaris.DynamicLoading
         }
 
         private Logger _logger;
+        private readonly bool _collectibleAsemblyContexts;
 
         private readonly object _lock = new();
     }
